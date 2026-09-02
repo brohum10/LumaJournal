@@ -28,6 +28,9 @@ struct OnDeviceJournalAnalyzer: JournalAnalyzing {
     }
 
     func analyze(_ text: String, now: Date) async throws -> JournalExtraction {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw AnalyzerError.emptyEntry }
+        guard text.count <= 20_000 else { throw AnalyzerError.entryTooLong }
         let session = LanguageModelSession(instructions: """
             Analyze only the supplied journal entry. Never diagnose mental health conditions.
             Do not invent people, tasks, dates, or events. Prefer an empty list when uncertain.
@@ -38,6 +41,18 @@ struct OnDeviceJournalAnalyzer: JournalAnalyzing {
             to: "Current date: \(currentDate)\n\nJournal entry:\n\(text)",
             generating: JournalExtraction.self
         )
-        return response.content
+        return response.content.normalized()
+    }
+}
+
+private enum AnalyzerError: LocalizedError {
+    case emptyEntry
+    case entryTooLong
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyEntry: "Write something before asking Luma to analyze it."
+        case .entryTooLong: "Analysis supports entries up to 20,000 characters."
+        }
     }
 }

@@ -7,10 +7,13 @@ struct EntryEditorView: View {
     @State private var text = ""
     @State private var extraction: JournalExtraction?
     @State private var isAnalyzing = false
+    @State private var analysisTask: Task<Void, Never>?
     @State private var alertMessage: String?
     @State private var transcriber = SpeechTranscriber()
     private let analyzer: any JournalAnalyzing = OnDeviceJournalAnalyzer()
     private let eventWriter = EventKitWriter()
+
+    private var trimmedText: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         NavigationStack {
@@ -24,15 +27,36 @@ struct EntryEditorView: View {
                         .accessibilityLabel("Journal entry")
 
                     HStack {
+                        Text("\(text.count.formatted()) characters")
+                        Spacer()
+                        if text.count > 20_000 { Text("Shorten to analyze") }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(text.count > 20_000 ? .orange : .secondary)
+
+                    HStack {
                         Button {
-                            Task { await transcriber.toggle { text = $0 } }
+                            let existingText = trimmedText
+                            Task {
+                                await transcriber.toggle { transcript in
+                                    text = existingText.isEmpty ? transcript : existingText + "\n\n" + transcript
+                                }
+                            }
                         } label: {
                             Label(transcriber.isRecording ? "Stop" : "Dictate", systemImage: transcriber.isRecording ? "stop.circle.fill" : "waveform")
                         }
                         .buttonStyle(.bordered)
+                        .disabled(transcriber.isStarting)
                         Spacer()
                         Label("On device", systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
                     }
+
+                    Button { analyze() } label: {
+                        Label(extraction == nil ? "Find themes and actions" : "Analyze again", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmedText.isEmpty || text.count > 20_000 || isAnalyzing)
 
                     if let extraction { ReviewCard(extraction: extraction, writer: eventWriter, alertMessage: $alertMessage) }
                 }
@@ -43,16 +67,21 @@ struct EntryEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(extraction == nil ? "Analyze" : "Save") {
-                        extraction == nil ? analyze() : save()
-                    }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAnalyzing)
+                    Button("Save") { save() }
+                        .disabled(trimmedText.isEmpty || isAnalyzing)
                 }
             }
             .overlay { if isAnalyzing { ProgressView("Finding themes…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) } }
             .alert("Luma Journal", isPresented: Binding(get: { alertMessage != nil || transcriber.errorMessage != nil }, set: { if !$0 { alertMessage = nil; transcriber.errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(alertMessage ?? transcriber.errorMessage ?? "") }
+            .onChange(of: text) { oldValue, newValue in
+                if oldValue != newValue, extraction != nil { extraction = nil }
+            }
+            .onDisappear {
+                analysisTask?.cancel()
+                transcriber.stop()
+            }
         }
     }
 
@@ -61,17 +90,33 @@ struct EntryEditorView: View {
             if case let .unavailable(reason) = analyzer.availability() { alertMessage = reason }
             return
         }
+        let source = trimmedText
         isAnalyzing = true
-        Task {
-            do { extraction = try await analyzer.analyze(text, now: .now) }
-            catch { alertMessage = "This entry couldn’t be analyzed: \(error.localizedDescription)" }
-            isAnalyzing = false
+        analysisTask?.cancel()
+        analysisTask = Task {
+            defer { isAnalyzing = false }
+            do {
+                let result = try await analyzer.analyze(source, now: .now)
+                guard !Task.isCancelled, trimmedText == source else { return }
+                extraction = result
+            } catch is CancellationError {
+                return
+            } catch {
+                alertMessage = "This entry couldn’t be analyzed: \(error.localizedDescription)"
+            }
         }
     }
 
     private func save() {
-        modelContext.insert(JournalEntry(text: text, extraction: extraction))
-        dismiss()
+        let entry = JournalEntry(text: trimmedText, extraction: extraction)
+        modelContext.insert(entry)
+        do {
+            try modelContext.save()
+            dismiss()
+        } catch {
+            modelContext.rollback()
+            alertMessage = "This entry couldn’t be saved: \(error.localizedDescription)"
+        }
     }
 }
 

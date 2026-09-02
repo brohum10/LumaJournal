@@ -7,8 +7,10 @@ final class SpeechTranscriber {
     private let audioEngine = AVAudioEngine()
     private var task: SFSpeechRecognitionTask?
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var hasInstalledTap = false
 
     var isRecording = false
+    var isStarting = false
     var errorMessage: String?
 
     func toggle(onTranscript: @escaping (String) -> Void) async {
@@ -16,6 +18,10 @@ final class SpeechTranscriber {
             stop()
             return
         }
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        errorMessage = nil
         do {
             try await start(onTranscript: onTranscript)
         } catch {
@@ -44,6 +50,7 @@ final class SpeechTranscriber {
         input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
             request.append(buffer)
         }
+        hasInstalledTap = true
         audioEngine.prepare()
         try audioEngine.start()
         isRecording = true
@@ -57,9 +64,10 @@ final class SpeechTranscriber {
     }
 
     func stop() {
-        if audioEngine.isRunning {
-            audioEngine.stop()
+        if audioEngine.isRunning { audioEngine.stop() }
+        if hasInstalledTap {
             audioEngine.inputNode.removeTap(onBus: 0)
+            hasInstalledTap = false
         }
         request?.endAudio()
         task?.cancel()

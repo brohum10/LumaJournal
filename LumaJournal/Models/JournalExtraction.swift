@@ -44,9 +44,72 @@ struct GeneratedEvent: Sendable, Identifiable {
     var durationMinutes: Int
 }
 
+extension JournalExtraction {
+    /// Treat model output as untrusted structured data before it reaches persistence or EventKit.
+    func normalized() -> JournalExtraction {
+        var seenTopics = Set<String>()
+        var seenTodoIDs = Set<String>()
+        var seenEventIDs = Set<String>()
+        let cleanTopics = topics.compactMap { raw -> String? in
+            let topic = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !topic.isEmpty, seenTopics.insert(topic.lowercased()).inserted else { return nil }
+            return topic
+        }.prefix(5)
+
+        let cleanTodos = todos.prefix(6).enumerated().compactMap { index, todo -> GeneratedTodo? in
+            let title = String(todo.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+            guard !title.isEmpty else { return nil }
+            let rawID = todo.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            var id = String((rawID.isEmpty ? "todo-\(index + 1)" : rawID).prefix(80))
+            if !seenTodoIDs.insert(id).inserted {
+                id = "\(id)-\(index + 1)"
+                seenTodoIDs.insert(id)
+            }
+            return GeneratedTodo(
+                id: id,
+                title: title,
+                dueDateISO8601: todo.dueDateISO8601.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        let cleanEvents = events.prefix(4).enumerated().compactMap { index, event -> GeneratedEvent? in
+            let title = String(event.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+            guard !title.isEmpty else { return nil }
+            let rawID = event.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            var id = String((rawID.isEmpty ? "event-\(index + 1)" : rawID).prefix(80))
+            if !seenEventIDs.insert(id).inserted {
+                id = "\(id)-\(index + 1)"
+                seenEventIDs.insert(id)
+            }
+            return GeneratedEvent(
+                id: id,
+                title: title,
+                startDateISO8601: event.startDateISO8601.trimmingCharacters(in: .whitespacesAndNewlines),
+                durationMinutes: min(max(event.durationMinutes, 5), 1_440)
+            )
+        }
+
+        let cleanMood = String(mood.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(40))
+        return JournalExtraction(
+            mood: cleanMood.isEmpty ? "neutral" : cleanMood,
+            moodScore: min(max(moodScore, 1), 5),
+            summary: String(summary.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)),
+            topics: Array(cleanTopics),
+            todos: cleanTodos,
+            events: cleanEvents
+        )
+    }
+}
+
 enum ExtractionDateParser {
     static func date(from value: String) -> Date? {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
-        return ISO8601DateFormatter().date(from: value)
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        if let date = standard.date(from: value) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value)
     }
 }
