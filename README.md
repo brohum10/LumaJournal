@@ -1,5 +1,10 @@
 # Luma Journal
 
+[![Build and test](https://github.com/brohum10/LumaJournal/actions/workflows/build.yml/badge.svg)](https://github.com/brohum10/LumaJournal/actions/workflows/build.yml)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138.svg?logo=swift&logoColor=white)](https://www.swift.org/)
+[![Platform: iOS 26+](https://img.shields.io/badge/iOS-26%2B-111827.svg?logo=apple)](https://developer.apple.com/ios/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Luma Journal is a privacy-first iPhone journal that turns a typed or dictated note into a mood, topics, and actionable suggestions using Apple Intelligence on device. Journaling remains fully usable when the model is unavailable; analysis is an optional enhancement, never a gate in front of saving.
 
 ## Highlights
